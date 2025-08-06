@@ -337,7 +337,7 @@ class GameController:
                     print(f"[SMART_PICKUP] 未检测到人物，尝试 {attempt + 1}/{max_attempts}")
                     if attempt == max_attempts - 1:
                         print(f"[SMART_PICKUP] 人物检测失败，强制拾取")
-                        get_controller().click_left(initial_equipment_x, initial_equipment_y)
+                        get_controller().left_click(initial_equipment_x, initial_equipment_y)
                         time.sleep(1.5)
                         break
                     time.sleep(0.5)
@@ -387,7 +387,7 @@ class GameController:
                 # 4. 判断是否在拾取范围内
                 if distance <= pickup_threshold:
                     print(f"[SMART_PICKUP] ✅ 人物在装备附近，执行拾取")
-                    get_controller().click_left(current_equipment_x, current_equipment_y)
+                    get_controller().left_click(current_equipment_x, current_equipment_y)
                     time.sleep(1.5)
                     print(f"[SMART_PICKUP] ✅ 装备拾取完成")
                     break
@@ -411,7 +411,7 @@ class GameController:
                         print(f"[SMART_PICKUP] 继续下一次检测...")
                     else:
                         print(f"[SMART_PICKUP] 达到最大尝试次数，强制拾取")
-                        get_controller().click_left(current_equipment_x, current_equipment_y)
+                        get_controller().left_click(current_equipment_x, current_equipment_y)
                         time.sleep(1.5)
                 
         except Exception as e:
@@ -420,7 +420,7 @@ class GameController:
             traceback.print_exc()
             print(f"[SMART_PICKUP] 异常情况下强制拾取")
             try:
-                get_controller().click_left(initial_equipment_x, initial_equipment_y)
+                get_controller().left_click(initial_equipment_x, initial_equipment_y)
                 time.sleep(1.5)
             except:
                 print(f"[SMART_PICKUP] 强制拾取也失败")
