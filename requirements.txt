@@ -1,0 +1,11 @@
+flask>=2.0.0
+requests>=2.25.0
+paddlepaddle>=2.4.0
+paddleocr>=2.6.0
+opencv-python>=4.5.0
+mss>=4.5.0
+numpy>=1.21.0
+pillow>=8.0.0
+waitress>=2.1.0
+pyautogui>=0.9.54
+keyboard>=1.13.0
