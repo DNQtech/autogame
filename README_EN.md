@@ -1,5 +1,16 @@
 # 🎮 Game Automation System
 
+<div align="center">
+
+[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](./README_EN.md)
+[![中文](https://img.shields.io/badge/中文-README-green?style=for-the-badge)](./README.md)
+[![Usage Guide](https://img.shields.io/badge/Usage_Guide-English-orange?style=for-the-badge)](./Usage_Guide_EN.md)
+[![使用指南](https://img.shields.io/badge/使用指南-中文-orange?style=for-the-badge)](./使用指南.md)
+
+---
+
+</div>
+
 An intelligent game automation solution supporting equipment detection, auto-combat, and smart pickup features. Built with multi-threading architecture for high stability and user-friendly operation experience.
 
 ## ✨ Core Features

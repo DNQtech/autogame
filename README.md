@@ -1,5 +1,16 @@
 # 🎮 游戏自动化系统
 
+<div align="center">
+
+[![Language](https://img.shields.io/badge/Language-中文-blue?style=for-the-badge)](./README.md)
+[![English](https://img.shields.io/badge/English-README-green?style=for-the-badge)](./README_EN.md)
+[![使用指南](https://img.shields.io/badge/使用指南-中文-orange?style=for-the-badge)](./使用指南.md)
+[![Usage Guide](https://img.shields.io/badge/Usage_Guide-English-orange?style=for-the-badge)](./Usage_Guide_EN.md)
+
+---
+
+</div>
+
 智能化的游戏自动化解决方案，支持装备检测、自动打怪、智能拾取等功能。采用多线程架构，具备高稳定性和用户友好的操作体验。
 
 ## ✨ 核心功能

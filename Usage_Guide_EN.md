@@ -1,5 +1,16 @@
 # 📖 Game Automation System - Usage Guide
 
+<div align="center">
+
+[![Usage Guide](https://img.shields.io/badge/Usage_Guide-English-blue?style=for-the-badge)](./Usage_Guide_EN.md)
+[![使用指南](https://img.shields.io/badge/使用指南-中文-green?style=for-the-badge)](./使用指南.md)
+[![Project Home](https://img.shields.io/badge/Project_Home-English-purple?style=for-the-badge)](./README_EN.md)
+[![项目主页](https://img.shields.io/badge/项目主页-中文-purple?style=for-the-badge)](./README.md)
+
+---
+
+</div>
+
 This guide provides detailed instructions for setting up, configuring, and using the Game Automation System.
 
 ## 🛠️ Environment Setup
