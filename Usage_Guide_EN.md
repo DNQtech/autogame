@@ -6,6 +6,8 @@
 [![使用指南](https://img.shields.io/badge/使用指南-中文-green?style=for-the-badge)](./使用指南.md)
 [![Project Home](https://img.shields.io/badge/Project_Home-English-purple?style=for-the-badge)](./README_EN.md)
 [![项目主页](https://img.shields.io/badge/项目主页-中文-purple?style=for-the-badge)](./README.md)
+[![OCR Docs](https://img.shields.io/badge/OCR_Docs-English-orange?style=for-the-badge)](./OCR_README_EN.md)
+[![OCR文档](https://img.shields.io/badge/OCR文档-中文-orange?style=for-the-badge)](./OCR_README.md)
 
 ---
 
