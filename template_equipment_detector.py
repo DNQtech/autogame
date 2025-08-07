@@ -114,8 +114,11 @@ class TemplateEquipmentDetector:
                 img = np.array(screenshot)[:, :, :3]
                 img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
                 return img
+                
         except Exception as e:
-            print(f"截屏错误: {e}")
+            print(f"[DETECTOR] 截屏错误: {e}")
+            import traceback
+            print(f"[DETECTOR] 截屏错误堆栈: {traceback.format_exc()}")
             return None
     
     def match_template_multiscale(self, image: np.ndarray, template_name: str, 
@@ -255,10 +258,12 @@ class TemplateEquipmentDetector:
         print("实时检测已停止")
     
     def _detection_loop(self, callback, fps):
-        """检测循环"""
+        """检测循环 - 增强版，具有自动重启机制"""
         frame_time = 1.0 / fps
         detection_count = 0
         loop_count = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
         
         print(f"[DETECTOR] 检测循环开始，初始状态: is_running={self.is_running}")
         
@@ -272,38 +277,35 @@ class TemplateEquipmentDetector:
                 loop_start = time.time()
                 loop_count += 1
                 
-                # 每50次检测输出一次状态
-                if loop_count % 50 == 0:
-                    print(f"[DETECTOR] 第{loop_count}次检测，状态: is_running={self.is_running}")
+                # 每100次检测输出一次状态
+                if loop_count % 100 == 0:
+                    print(f"✅ [装备检测] 正常运行中... 已检测{loop_count}次，连续错误: {consecutive_errors}")
+                elif loop_count % 50 == 0:
+                    print(f"🔍 [装备检测] 持续监控装备掉落... ({loop_count}次检测)")
                 
+                # 执行检测
                 matches, detection_time = self.single_detection()
+                consecutive_errors = 0  # 成功检测，重置错误计数
                 
-                # 输出每次检测的耗时
+                # 处理检测结果
                 if matches:
                     detection_count += len(matches)
-                    print(f"\n🔍 第{loop_count}次检测耗时: {detection_time:.2f}ms - 发现{len(matches)}个装备!")
-                    print(f"[DETECTOR] 回调前状态: is_running={self.is_running}")
+                    print(f"\n🎯 [装备发现] 第{loop_count}次检测发现{len(matches)}个装备! 耗时: {detection_time:.2f}ms")
                     
                     for match in matches:
-                        self.result_queue.put(match)
-                        if callback:
-                            try:
+                        try:
+                            print(f"📦 [装备拾取] 发现装备: {match.template_name} 位置: ({match.x}, {match.y}) 置信度: {match.confidence:.2f}")
+                            self.result_queue.put(match)
+                            if callback:
                                 callback(match)
-                                print(f"[DETECTOR] 回调后状态: is_running={self.is_running}")
-                            except Exception as e:
-                                print(f"回调函数错误: {e}")
-                                import traceback
-                                traceback.print_exc()
-                                print(f"[DETECTOR] 回调异常后状态: is_running={self.is_running}")
-                                # 回调异常不应该影响检测循环，继续运行
-                                
-                    # 检查回调后状态
+                        except Exception as callback_error:
+                            print(f"[DETECTOR] 回调函数错误: {callback_error}")
+                            # 回调错误不影响检测继续
+                            
+                    # 检查回调后状态，防止被意外停止
                     if not self.is_running:
                         print(f"[DETECTOR] 警告: 回调后 is_running 被设置为 False，强制恢复为 True")
                         self.is_running = True
-                        
-                else:
-                    print(f"第{loop_count}次检测耗时: {detection_time:.2f}ms - 未发现装备", end="\r")  # \r 覆盖显示
                 
                 # 控制帧率
                 elapsed = time.time() - loop_start
@@ -312,13 +314,29 @@ class TemplateEquipmentDetector:
                     time.sleep(sleep_time)
                     
             except Exception as e:
-                print(f"检测循环错误: {e}")
+                consecutive_errors += 1
+                print(f"[DETECTOR] 检测循环错误 ({consecutive_errors}/{max_consecutive_errors}): {e}")
                 import traceback
-                traceback.print_exc()
-                time.sleep(0.1)
+                print(f"[DETECTOR] 错误堆栈: {traceback.format_exc()}")
+                
+                # 如果连续错误太多，尝试重启
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"[DETECTOR] 连续错误过多，尝试重置检测器...")
+                    try:
+                        # 重新初始化检测器状态
+                        self.result_queue = queue.Queue()
+                        consecutive_errors = 0
+                        print(f"[DETECTOR] 检测器重置成功")
+                    except Exception as reset_error:
+                        print(f"[DETECTOR] 检测器重置失败: {reset_error}")
+                        # 如果重置也失败，停止检测
+                        self.is_running = False
+                        break
+                
+                time.sleep(0.5)  # 错误后稍微等待长一些
         
         print(f"[DETECTOR] 检测线程结束，最终状态: is_running={self.is_running}")
-        print(f"检测线程结束，总共进行了{loop_count}次检测，发现 {detection_count} 个目标装备")
+        print(f"[DETECTOR] 总共进行了{loop_count}次检测，发现 {detection_count} 个目标装备")
     
     def get_latest_results(self) -> List[EquipmentMatch]:
         """获取最新检测结果"""

@@ -24,7 +24,6 @@ sys.path.insert(0, str(project_root))
 
 from template_equipment_detector import TemplateEquipmentDetector
 from mouse_keyboard_controller import MouseKeyboardController, get_controller
-from hero_detector import HeroDetector
 
 
 class GameController:
@@ -46,7 +45,28 @@ class GameController:
         self.screen_width = 1920
         self.screen_height = 1080
         self.fight_interval = 1.5  # 打怪间隔（秒）
-        self.move_interval = 3.0   # 移动间隔（秒）
+        self.move_interval = 2.0   # 移动间隔（秒）
+        
+        # 新增参数 - 圆环移动系统
+        self.random_move_count = 0  # 随机移动计数
+        self.max_random_moves = 30  # 最大随机移动次数，可配置
+        self.pickup_safe_distance = 50  # 拾取安全距离（像素）
+        
+        # 现实移动系统参数（基于屏幕坐标）
+        self.movement_radius = 150  # 移动半径（像素）
+        self.screen_center_x = self.screen_width // 2  # 屏幕中心X（固定）
+        self.screen_center_y = self.screen_height // 2  # 屏幕中心Y（固定）
+        
+        # 移动模式：'around_center' 或 'random_area'
+        self.movement_mode = 'around_center'  # 围绕屏幕中心移动
+        
+        # 移动区域定义
+        self.movement_area = {
+            'min_x': int(self.screen_width * 0.3),   # 屏幕30%位置
+            'max_x': int(self.screen_width * 0.7),   # 屏幕70%位置
+            'min_y': int(self.screen_height * 0.3),  # 屏幕30%位置
+            'max_y': int(self.screen_height * 0.7)   # 屏幕70%位置
+        }
         
     def equipment_detected_callback(self, match):
         """装备检测回调函数"""
@@ -56,18 +76,6 @@ class GameController:
             # 从 position元组中获取坐标和尺寸
             x, y, w, h = match.position
             
-            # 计算装备中心坐标
-            center_x = x + w // 2
-            center_y = y + h // 2
-            
-            # 设置装备位置信息
-            self.equipment_found = True
-            self.equipment_position = (center_x, center_y)
-            
-            print(f"[EQUIPMENT] 装备名称: {match.equipment_name}")
-            
-            # 使用智能拾取方法
-            self.smart_pickup_equipment(center_x, center_y)
             
         except Exception as e:
             print(f"[ERROR] 装备检测回调异常: {e}")
@@ -97,27 +105,57 @@ class GameController:
         """启动装备监控线程"""
         print(f"[INFO] 启动装备监控...")
         
-        # 初始化装备检测器
-        self.detector = TemplateEquipmentDetector()
-        self.detector.load_templates_from_folder("D:/ggc/projects/only/equipment")
-        
-        # 初始化人物检测器
-        self.hero_detector = HeroDetector()
-        
-        # 加载装备模板
-        template_dir = project_root / "templates"
-        if template_dir.exists():
-            loaded_count = self.detector.load_templates_from_folder(str(template_dir))
-            print(f"[INFO] 成功加载 {loaded_count} 个装备模板")
-        else:
-            print(f"[WARNING] 模板目录不存在: {template_dir}")
-        
-        # 启动监控线程
-        self.monitor_thread = threading.Thread(
-            target=self._equipment_monitor_loop,
-            daemon=True
-        )
-        self.monitor_thread.start()
+        try:
+            # 初始化装备检测器
+            print(f"[INFO] 初始化装备检测器...")
+            self.detector = TemplateEquipmentDetector()
+            print(f"[INFO] 装备检测器初始化成功")
+            
+            # 加载装备模板（从 templates 文件夹）
+            template_dir = project_root / "templates"
+            print(f"[INFO] 模板目录: {template_dir}")
+            
+            if template_dir.exists():
+                print(f"[INFO] 正在加载装备模板...")
+                loaded_count = self.detector.load_templates_from_folder(str(template_dir))
+                print(f"[INFO] 成功加载 {loaded_count} 个装备模板")
+                
+                if loaded_count == 0:
+                    print(f"[WARNING] 未加载到任何装备模板！")
+                    return
+            else:
+                print(f"[ERROR] 模板目录不存在: {template_dir}")
+                return
+            
+            # 启动监控线程
+            print(f"[INFO] 创建监控线程...")
+            self.monitor_thread = threading.Thread(
+                target=self._equipment_monitor_loop,
+                daemon=True,
+                name="EquipmentMonitor"
+            )
+            
+            print(f"[INFO] 启动监控线程...")
+            self.monitor_thread.start()
+            
+            # 等待一下让线程初始化
+            import time
+            time.sleep(0.5)
+            
+            # 检查线程状态
+            thread_alive = self.monitor_thread.is_alive() if self.monitor_thread else False
+            detector_running = self.detector.is_running if self.detector else False
+            
+            print(f"[INFO] 监控线程状态: {thread_alive}")
+            print(f"[INFO] 检测器状态: {detector_running}")
+            
+            if not thread_alive:
+                print(f"[ERROR] 监控线程启动失败！")
+            
+        except Exception as e:
+            print(f"[ERROR] 启动装备监控失败: {e}")
+            import traceback
+            traceback.print_exc()
         
     def _equipment_monitor_loop(self):
         """装备监控循环（后台线程）"""
@@ -126,14 +164,33 @@ class GameController:
             print(f"[MONITOR] 检测器初始状态: is_running={self.detector.is_running}")
             print(f"[MONITOR] 游戏控制器状态: is_running={self.is_running}")
             
-            # start_realtime_detection是阻塞调用，会持续运行直到被停止
+            # 启动检测器（非阻塞调用）
             print(f"[MONITOR] 正在调用 start_realtime_detection...")
             self.detector.start_realtime_detection(
                 callback=self.equipment_detected_callback,
                 fps=20  # 20FPS高频检测
             )
-            print(f"[MONITOR] start_realtime_detection 返回，装备检测线程已退出")
-            print(f"[MONITOR] 检测器最终状态: is_running={self.detector.is_running}")
+            print(f"[MONITOR] start_realtime_detection 调用完成，检测器已启动")
+            
+            # 监控线程保持运行，直到游戏系统停止
+            print(f"[MONITOR] 监控线程开始保持运行...")
+            while self.is_running:
+                # 检查检测器状态
+                if not self.detector.is_running:
+                    print(f"[MONITOR] 检测器已停止，尝试重启...")
+                    try:
+                        self.detector.start_realtime_detection(
+                            callback=self.equipment_detected_callback,
+                            fps=20
+                        )
+                        print(f"[MONITOR] 检测器重启成功")
+                    except Exception as restart_error:
+                        print(f"[MONITOR] 检测器重启失败: {restart_error}")
+                        time.sleep(5)  # 等待5秒后再试
+                
+                time.sleep(1)  # 每秒检查一次
+            
+            print(f"[MONITOR] 游戏系统停止，退出监控循环")
                 
         except Exception as e:
             print(f"[ERROR] 装备监控异常: {e}")
@@ -177,9 +234,13 @@ class GameController:
                 # 每10秒检查一次装备监控状态
                 current_time = time.time()
                 if current_time - last_monitor_check >= 10:
-                    monitor_status = self.detector.is_running if self.detector else False
-                    thread_alive = self.monitor_thread.is_alive() if self.monitor_thread else False
-                    print(f"[COMBAT] 监控状态检查: 检测器={monitor_status}, 线程={thread_alive}")
+                    detector_status = self.detector.is_running if self.detector else False
+                    monitor_status = self.monitor_thread.is_alive() if self.monitor_thread else False
+                    # 系统状态显示
+                    if detector_status and monitor_status:
+                        print(f"✅ [系统状态] 装备检测正常 | 自动打怪正常 | 自动拾取就绪")
+                    else:
+                        print(f"⚠️  [系统状态] 装备检测={detector_status}, 监控线程={monitor_status}")
                     last_monitor_check = current_time
                         
                 # 检查是否需要暂停打怪（发现装备）
@@ -194,11 +255,18 @@ class GameController:
                 
                 # 移动角色（每3秒移动一次）
                 if current_time - last_move_time >= self.move_interval:
-                    move_pos = self.controller.get_random_move_position(
-                        self.screen_width, self.screen_height
-                    )
+                    # 检查是否需要回到初始位置
+                    if self.random_move_count >= self.max_random_moves:
+                        print(f"[MOVE] 已完成 {self.random_move_count} 次随机移动，回到游戏世界初始位置")
+                        move_pos = self.return_to_center()
+                        self.random_move_count = 0  # 重置计数
+                        print(f"[MOVE] 回到中心位置: ({move_pos[0]}, {move_pos[1]})")
+                    else:
+                        # 在固定半径圆环内随机移动
+                        move_pos = self.get_random_combat_position()
+                        self.random_move_count += 1
+                        print(f"[MOVE] 随机移动: ({move_pos[0]}, {move_pos[1]}) [计数: {self.random_move_count}/{self.max_random_moves}]")
                     
-                    print(f"[MOVE] 移动到: ({move_pos[0]}, {move_pos[1]})")
                     move_result = self.controller.move_character(
                         move_pos[0], move_pos[1], 0.5
                     )
@@ -212,9 +280,8 @@ class GameController:
                 
                 # 攻击技能（每1.5秒攻击一次）
                 if current_time - last_attack_time >= self.fight_interval:
-                    attack_pos = self.controller.get_random_move_position(
-                        self.screen_width, self.screen_height
-                    )
+                    # 在屏幕70%-80%范围内随机攻击
+                    attack_pos = self.get_random_combat_position()
                     
                     print(f"[ATTACK] 攻击技能: ({attack_pos[0]}, {attack_pos[1]})")
                     attack_result = self.controller.attack_skill(
@@ -305,23 +372,27 @@ class GameController:
             print(f"[COMBAT] 恢复打怪模式...")
             print(f"[DEBUG] 装备检测器状态: {self.detector.is_running if self.detector else 'None'}")
             
-    def smart_pickup_equipment(self, initial_equipment_x, initial_equipment_y):
+    def smart_pickup_nearest_equipment(self, equipment_x, equipment_y):
         """
-        智能装备拾取：循环检测人物和装备位置，动态调整移动目标
+        新的智能拾取逻辑：找到离屏幕中心最近的装备并拾取
+        人物角色固定在屏幕中心，无需检测人物位置
         
         Args:
-            initial_equipment_x: 装备初始 X坐标
-            initial_equipment_y: 装备初始 Y坐标
+            equipment_x: 装备 X坐标
+            equipment_y: 装备 Y坐标
         """
-        print(f"[SMART_PICKUP] 开始智能拾取装备，初始位置: ({initial_equipment_x}, {initial_equipment_y})")
+        print(f"[SMART_PICKUP] 开始智能拾取装备，目标位置: ({equipment_x}, {equipment_y})")
         
         # 暂停打怪
         self.is_fighting = False
         print(f"[SMART_PICKUP] 暂停打怪")
         
         try:
-            max_attempts = 5  # 最大尝试次数
-            pickup_threshold = 25  # 拾取距离阈值
+            # 屏幕中心坐标（人物位置）
+            screen_center_x = self.screen_width // 2
+            screen_center_y = self.screen_height // 2
+            
+            max_attempts = 8  # 最大尝试次数
             
             for attempt in range(max_attempts):
                 print(f"[SMART_PICKUP] === 第 {attempt + 1} 次尝试 ===")
@@ -331,88 +402,27 @@ class GameController:
                     print(f"[SMART_PICKUP] 接收到停止信号，中断拾取")
                     return
                 
-                # 1. 检测人物位置
-                hero_pos = self.hero_detector.detect_hero(threshold=0.6)
-                if not hero_pos:
-                    print(f"[SMART_PICKUP] 未检测到人物，尝试 {attempt + 1}/{max_attempts}")
-                    if attempt == max_attempts - 1:
-                        print(f"[SMART_PICKUP] 人物检测失败，强制拾取")
-                        get_controller().left_click(initial_equipment_x, initial_equipment_y)
-                        time.sleep(1.5)
-                        break
-                    time.sleep(0.5)
-                    continue
-                
-                hero_x, hero_y = hero_pos.x, hero_pos.y
-                print(f"[SMART_PICKUP] 人物位置: ({hero_x}, {hero_y}), 置信度: {hero_pos.confidence:.3f}")
-                
-                # 2. 重新检测装备位置（可能已移动）
+                # 1. 重新检测装备位置，找到离屏幕中心最近的装备
                 current_equipment_matches = self.detector.single_detection()[0]
-                current_equipment_x, current_equipment_y = initial_equipment_x, initial_equipment_y
+                nearest_equipment_x, nearest_equipment_y = equipment_x, equipment_y
                 
                 if current_equipment_matches:
-                    # 找到最近的装备
-                    closest_match = None
-                    min_distance = float('inf')
+                    min_distance_to_center = float('inf')
                     
                     for match in current_equipment_matches:
                         ex, ey, ew, eh = match.position
-                        equipment_center_x = ex + ew // 2
-                        equipment_center_y = ey + eh // 2
-                        
-                        distance_to_initial = self.hero_detector.calculate_distance(
-                            (equipment_center_x, equipment_center_y), 
-                            (initial_equipment_x, initial_equipment_y)
-                        )
-                        
-                        if distance_to_initial < min_distance:
-                            min_distance = distance_to_initial
-                            closest_match = match
-                            current_equipment_x = equipment_center_x
-                            current_equipment_y = equipment_center_y
+                        print(f"[SMART_PICKUP] 移动失败: {move_result.error_message}")
                     
-                    if closest_match:
-                        print(f"[SMART_PICKUP] 更新装备位置: ({current_equipment_x}, {current_equipment_y})")
-                    else:
-                        print(f"[SMART_PICKUP] 未找到装备，使用初始位置")
-                else:
-                    print(f"[SMART_PICKUP] 未检测到装备，使用初始位置")
-                
-                # 3. 计算人物与装备的距离
-                distance = self.hero_detector.calculate_distance(
-                    (hero_x, hero_y), (current_equipment_x, current_equipment_y)
-                )
-                print(f"[SMART_PICKUP] 人物距离装备: {distance:.1f} 像素")
-                
-                # 4. 判断是否在拾取范围内
-                if distance <= pickup_threshold:
-                    print(f"[SMART_PICKUP] ✅ 人物在装备附近，执行拾取")
-                    get_controller().left_click(current_equipment_x, current_equipment_y)
+                    # 5. 等待移动完成
                     time.sleep(1.5)
-                    print(f"[SMART_PICKUP] ✅ 装备拾取完成")
-                    break
-                else:
-                    # 5. 计算新的移动目标位置
-                    target_x, target_y = self.hero_detector.get_move_position_near_equipment(
-                        (hero_x, hero_y), (current_equipment_x, current_equipment_y), distance=20
-                    )
-                    print(f"[SMART_PICKUP] 计算新目标: ({target_x}, {target_y})")
-                    
-                    # 6. 移动到新目标位置
-                    print(f"[SMART_PICKUP] 移动到新目标位置...")
-                    move_result = get_controller().move_character(target_x, target_y, duration=1.0)
-                    print(f"[SMART_PICKUP] 移动完成")
-                    
-                    # 7. 等待移动完成
-                    time.sleep(1.2)
                     
                     # 继续下一次循环检测
                     if attempt < max_attempts - 1:
                         print(f"[SMART_PICKUP] 继续下一次检测...")
                     else:
                         print(f"[SMART_PICKUP] 达到最大尝试次数，强制拾取")
-                        get_controller().left_click(current_equipment_x, current_equipment_y)
-                        time.sleep(1.5)
+                        get_controller().left_click(nearest_equipment_x, nearest_equipment_y)
+                        time.sleep(2.0)
                 
         except Exception as e:
             print(f"[SMART_PICKUP] ⚠️ 智能拾取异常: {e}")
@@ -420,35 +430,278 @@ class GameController:
             traceback.print_exc()
             print(f"[SMART_PICKUP] 异常情况下强制拾取")
             try:
-                get_controller().left_click(initial_equipment_x, initial_equipment_y)
-                time.sleep(1.5)
+                get_controller().left_click(equipment_x, equipment_y)
+                time.sleep(2.0)
             except:
                 print(f"[SMART_PICKUP] 强制拾取也失败")
         
-        # 8. 恢复打怪状态
+        # 6. 恢复打怪状态
         time.sleep(1.0)
         self.is_fighting = True
         self.equipment_found = False
         print(f"[SMART_PICKUP] ✅ 智能拾取流程完成，恢复打怪状态")
         
-        # 9. 检查并重启装备检测
+        # 7. 检查并重启装备检测
         self._check_and_restart_equipment_monitor()
     
-
+    def get_random_combat_position(self):
+        """
+        现实可行的随机移动系统
+        基于屏幕坐标，不依赖游戏世界的真实坐标
+        
+        Returns:
+            tuple: (x, y) 随机位置坐标
+        """
+        import random
+        import math
+        
+        if self.movement_mode == 'around_center':
+            # 模式1：围绕屏幕中心移动
+            angle = random.uniform(0, 2 * math.pi)
+            # 随机半径，但不要太近中心
+            radius = random.uniform(self.movement_radius * 0.4, self.movement_radius)
+            
+            target_x = self.screen_center_x + radius * math.cos(angle)
+            target_y = self.screen_center_y + radius * math.sin(angle)
+            
+        else:  # 'random_area'
+            # 模式2：在指定区域内随机移动
+            target_x = random.randint(self.movement_area['min_x'], self.movement_area['max_x'])
+            target_y = random.randint(self.movement_area['min_y'], self.movement_area['max_y'])
+        
+        # 确保目标位置在屏幕范围内
+        target_x = max(50, min(self.screen_width - 50, target_x))
+        target_y = max(50, min(self.screen_height - 50, target_y))
+        
+        return (int(target_x), int(target_y))
+    
+    def return_to_center(self):
+        """
+        回到屏幕中心位置
+        这是唯一现实可行的“回归”方式
+        
+        Returns:
+            tuple: (x, y) 屏幕中心位置
+        """
+        return (self.screen_center_x, self.screen_center_y)
+    
+    def set_max_random_moves(self, count):
+        """
+        设置最大随机移动次数
+        
+        Args:
+            count: 最大随机移动次数
+        """
+        self.max_random_moves = max(1, count)
+        print(f"[CONFIG] 设置最大随机移动次数: {self.max_random_moves}")
+    
+    def set_movement_radius(self, radius):
+        """
+        设置移动半径（仅在around_center模式下有效）
+        
+        Args:
+            radius (int): 移动半径（像素）
+        """
+        self.movement_radius = max(50, min(300, radius))  # 限制在合理范围内
+        print(f"[CONFIG] 移动半径设置为: {self.movement_radius} 像素")
+    
+    def set_movement_mode(self, mode):
+        """
+        设置移动模式
+        
+        Args:
+            mode (str): 'around_center' 或 'random_area'
+        """
+        if mode in ['around_center', 'random_area']:
+            self.movement_mode = mode
+            print(f"[CONFIG] 移动模式设置为: {mode}")
+        else:
+            print(f"[ERROR] 无效的移动模式: {mode}")
+    
+    def set_movement_area(self, min_x_percent=0.3, max_x_percent=0.7, min_y_percent=0.3, max_y_percent=0.7):
+        """
+        设置移动区域（仅在random_area模式下有效）
+        
+        Args:
+            min_x_percent (float): X轴最小位置（屏幕百分比）
+            max_x_percent (float): X轴最大位置（屏幕百分比）
+            min_y_percent (float): Y轴最小位置（屏幕百分比）
+            max_y_percent (float): Y轴最大位置（屏幕百分比）
+        """
+        self.movement_area = {
+            'min_x': int(self.screen_width * min_x_percent),
+            'max_x': int(self.screen_width * max_x_percent),
+            'min_y': int(self.screen_height * min_y_percent),
+            'max_y': int(self.screen_height * max_y_percent)
+        }
+        print(f"[CONFIG] 移动区域设置为: {self.movement_area}")
+    
+    def set_fight_intervals(self, move_interval=None, attack_interval=None):
+        """
+        设置打怪频率
+        
+        Args:
+            move_interval: 移动间隔（秒）
+            attack_interval: 攻击间隔（秒）
+        """
+        if move_interval is not None:
+            self.move_interval = max(0.5, move_interval)
+            print(f"[CONFIG] 设置移动间隔: {self.move_interval} 秒")
+        
+        if attack_interval is not None:
+            self.fight_interval = max(0.1, attack_interval)
+            print(f"[CONFIG] 设置攻击间隔: {self.fight_interval} 秒")
+    def get_current_position_info(self):
+        """
+        获取当前位置信息（用于调试）
+        
+        Returns:
+            dict: 包含当前移动状态的信息
+        """
+        return {
+            'random_move_count': self.random_move_count,
+            'max_random_moves': self.max_random_moves,
+            'movement_radius': self.movement_radius,
+            'movement_mode': self.movement_mode,
+            'movement_area': self.movement_area,
+            'screen_center': (self.screen_center_x, self.screen_center_y)
+        }
+    
+    def validate_movement_system(self):
+        """
+        验证现实移动系统的有效性
+        模拟多次随机移动，检查移动范围是否合理
+        """
+        print("\n[VALIDATION] 开始验证现实移动系统...")
+        print(f"[VALIDATION] 当前移动模式: {self.movement_mode}")
+        
+        import math
+        
+        test_moves = 10
+        positions = []
+        
+        print(f"[VALIDATION] 测试移动次数: {test_moves}")
+        
+        # 模拟多次随机移动
+        for i in range(test_moves):
+            pos_x, pos_y = self.get_random_combat_position()
+            positions.append((pos_x, pos_y))
+            
+            if self.movement_mode == 'around_center':
+                # 计算到屏幕中心的距离
+                distance_to_center = math.sqrt(
+                    (pos_x - self.screen_center_x) ** 2 + 
+                    (pos_y - self.screen_center_y) ** 2
+                )
+                print(f"[VALIDATION] 第{i+1}次移动: ({pos_x}, {pos_y}), 距离中心: {distance_to_center:.1f}")
+            else:
+                print(f"[VALIDATION] 第{i+1}次移动: ({pos_x}, {pos_y})")
+        
+        # 测试回到中心
+        center_pos = self.return_to_center()
+        print(f"[VALIDATION] 回到中心位置: {center_pos}")
+        
+        # 验证结果
+        if self.movement_mode == 'around_center':
+            # 验证所有位置都在半径范围内
+            distances = [math.sqrt((x - self.screen_center_x)**2 + (y - self.screen_center_y)**2) for x, y in positions]
+            max_distance = max(distances)
+            min_distance = min(distances)
+            
+            radius_ok = max_distance <= self.movement_radius * 1.1
+            print(f"[VALIDATION] 最大距离: {max_distance:.1f}, 最小距离: {min_distance:.1f}")
+            print(f"[VALIDATION] 半径控制: {'✅ 通过' if radius_ok else '❌ 失败'}")
+            
+        else:  # random_area
+            # 验证所有位置都在指定区域内
+            area_ok = all(
+                self.movement_area['min_x'] <= x <= self.movement_area['max_x'] and
+                self.movement_area['min_y'] <= y <= self.movement_area['max_y']
+                for x, y in positions
+            )
+            print(f"[VALIDATION] 区域控制: {'✅ 通过' if area_ok else '❌ 失败'}")
+            radius_ok = area_ok
+        
+        # 验证回到中心功能
+        center_ok = center_pos == (self.screen_center_x, self.screen_center_y)
+        print(f"[VALIDATION] 中心回归: {'✅ 通过' if center_ok else '❌ 失败'}")
+        print(f"[VALIDATION] 系统验证: {'✅ 全部通过' if (radius_ok and center_ok) else '❌ 存在问题'}")
+        
+        return radius_ok and center_ok
     
     def _check_and_restart_equipment_monitor(self):
-        """检查并重启装备监控线程"""
-        if hasattr(self, 'equipment_monitor_thread'):
-            print(f"[MONITOR] 装备监控线程状态: alive={self.equipment_monitor_thread.is_alive()}")
-            print(f"[MONITOR] 检测器状态: is_running={self.detector.is_running}")
+        """检查并重启装备监控线程 - 增强版"""
+        if not self.is_running:
+            print(f"[MONITOR] 游戏已停止，不重启检测器")
+            return
             
-            # 如果检测线程停止了，重新启动
-            if not self.equipment_monitor_thread.is_alive() or not self.detector.is_running:
-                print(f"[MONITOR] 检测线程已停止，重新启动...")
-                time.sleep(0.5)  # 等待一下
-                self._restart_equipment_monitor()
+        try:
+            monitor_thread_alive = hasattr(self, 'monitor_thread') and self.monitor_thread and self.monitor_thread.is_alive()
+            detector_running = self.detector and self.detector.is_running
+            
+            print(f"[MONITOR] 状态检查: 监控线程={monitor_thread_alive}, 检测器={detector_running}")
+            
+            # 如果检测线程死亡或检测器停止，重新启动
+            if not monitor_thread_alive or not detector_running:
+                print(f"[MONITOR] 检测系统异常，正在重启...")
+                
+                # 停止旧的检测器
+                if self.detector:
+                    try:
+                        self.detector.stop_realtime_detection()
+                        time.sleep(0.5)
+                    except Exception as e:
+                        print(f"[MONITOR] 停止旧检测器失败: {e}")
+                
+                # 等待旧线程结束
+                if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                    try:
+                        self.monitor_thread.join(timeout=2.0)
+                        print(f"[MONITOR] 旧线程已结束")
+                    except Exception as e:
+                        print(f"[MONITOR] 等待旧线程结束失败: {e}")
+                
+                # 重新创建检测器
+                try:
+                    print(f"[MONITOR] 重新创建检测器...")
+                    self.detector = TemplateEquipmentDetector()
+                    
+                    # 重新加载模板
+                    template_dir = project_root / "templates"
+                    if template_dir.exists():
+                        loaded_count = self.detector.load_templates_from_folder(str(template_dir))
+                        print(f"[MONITOR] 重新加载 {loaded_count} 个模板")
+                    
+                    # 重新启动检测
+                    self.detector.start_realtime_detection(
+                        callback=self.equipment_detected_callback,
+                        fps=20
+                    )
+                    
+                    # 重新创建监控线程
+                    self.monitor_thread = threading.Thread(
+                        target=self._equipment_monitor_loop,
+                        daemon=True
+                    )
+                    self.monitor_thread.start()
+                    
+                    print(f"[MONITOR] 装备检测系统重启成功")
+                    
+                    # 等待初始化完成
+                    time.sleep(1.0)
+                    
+                except Exception as restart_error:
+                    print(f"[MONITOR] 重启检测系统失败: {restart_error}")
+                    import traceback
+                    traceback.print_exc()
+                    
             else:
-                print(f"[MONITOR] 检测线程正常运行，无需重启")
+                print(f"[MONITOR] 检测系统正常运行")
+                
+        except Exception as e:
+            print(f"[MONITOR] 检查重启监控器异常: {e}")
+            import traceback
+            traceback.print_exc()
             
     def start(self):
         """启动游戏控制器"""
@@ -468,8 +721,11 @@ class GameController:
         
         try:
             # 启动装备监控
+            print(f"\n[DEBUG] 即将调用 start_equipment_monitor()...")
             self.start_equipment_monitor()
+            print(f"[DEBUG] start_equipment_monitor() 调用完成")
             time.sleep(2)  # 等待监控启动
+            print(f"[DEBUG] 等待监控启动完成")
             
             # 启动打怪循环
             self.start_fighting()
@@ -542,20 +798,63 @@ class GameController:
 
 def main():
     """主函数"""
-    print(f"[MAIN] 游戏自动化控制系统")
-    print(f"[MAIN] 版本: 1.0")
-    print(f"[MAIN] 功能: 自动打怪 + 装备监控 + 智能拾取")
+    print(f"\n" + "=" * 70)
+    print(f"🎮 游戏自动化系统 v3.0 - 增强版")
+    print(f"=" * 70)
+    print(f"🆕 新功能亮点:")
+    print(f"  ✅ 移除人物检测 - 人物固定在屏幕中心")
+    print(f"  ✅ 智能装备拾取 - 找到离中心最近的装备")
+    print(f"  ✅ 随机战斗位置 - 在屏幕70%-80%范围内移动")
+    print(f"  ✅ 自动回到原位 - 随机30次后回到中心")
+    print(f"  ✅ 装备检测线程自动重启 - 增强稳定性")
+    print(f"  ✅ 拾取不被打断 - 确保拾取过程完整")
+    print(f"=" * 70)
     
-    # 检查模板目录
-    template_dir = project_root / "templates"
-    if not template_dir.exists():
-        print(f"[ERROR] 模板目录不存在: {template_dir}")
-        print(f"[ERROR] 请确保 templates 目录存在并包含装备模板图片")
-        return
+    try:
+        # 检查模板目录
+        template_dir = project_root / "templates"
+        if not template_dir.exists():
+            print(f"\n⚠️  [ERROR] 模板目录不存在: {template_dir}")
+            print(f"   请确保 templates 目录存在并包含装备模板图片")
+            print(f"   可以使用 template_equipment_detector.py 来测试模板")
+            return
+            
+        # 创建并启动游戏控制器
+        game_controller = GameController()
         
-    # 创建并启动游戏控制器
-    game_controller = GameController()
-    game_controller.start()
+        # 可选配置参数（根据需要取消注释）
+        # game_controller.set_max_random_moves(25)        # 设置随机移动次数（默认30）
+        # game_controller.set_movement_radius(150)        # 设置移动半径（默认200像素）
+        # game_controller.set_fight_intervals(2.0, 1.0)  # 设置移动和攻击间隔（默认3.0s, 1.5s）
+        
+        # 验证现实移动系统（可选）
+        print(f"\n🔍 验证现实移动系统...")
+        validation_result = game_controller.validate_movement_system()
+        
+        if validation_result:
+            print(f"\n✅ 系统验证通过！移动系统工作正常")
+        else:
+            print(f"\n⚠️  系统验证发现问题，但仍可以继续运行")
+        
+        print(f"\n🚀 正在启动游戏系统...")
+        print(f"🎯 当前配置:")
+        print(f"   - 移动半径: {game_controller.movement_radius} 像素")
+        print(f"   - 随机移动次数: {game_controller.max_random_moves} 次")
+        print(f"   - 移动间隔: {game_controller.move_interval} 秒")
+        print(f"   - 攻击间隔: {game_controller.fight_interval} 秒")
+        print(f"=" * 70)
+        
+        game_controller.start()
+        
+    except KeyboardInterrupt:
+        print(f"\n\n🛑 用户中断程序 (Ctrl+C)")
+    except Exception as e:
+        print(f"\n\n⚠️  程序异常: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print(f"\n👋 游戏自动化系统已停止")
+        print(f"=" * 70)
 
 
 if __name__ == "__main__":
