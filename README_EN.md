@@ -191,13 +191,32 @@ pickup_safe_distance = 50                       # Safe pickup distance (pixels)
    - Confirm sufficient system resources
    - Review console error messages
 
-## 📞 Technical Support
+## 🤝 Contribution Guide
 
-If you encounter issues, please:
-1. Review detailed error information in console output
-2. Check system environment and dependency package versions
-3. Refer to troubleshooting section solutions
+We welcome contributions to the project! You can participate in the following ways:
+
+1. **Code Contributions**
+   - Fork the project repository
+   - Create feature branches
+   - Submit Pull Requests
+
+2. **Documentation Improvements**
+   - Enhance usage documentation
+   - Translate multi-language versions
+   - Add usage examples
+
+3. **Issue Reporting**
+   - Report bugs and issues
+   - Suggest new features
+   - Share usage experiences
+
+4. **Community Building**
+   - Help other users solve problems
+   - Share best practices
+   - Promote project usage
 
 ---
 
 🎉 **Game Automation System** - Intelligent, stable, and efficient game assistance solution!
+
+💝 ** If this project helps you, please give it a Star for support!**
