@@ -77,17 +77,20 @@ class EnhancedDingTalkInjector:
         try:
             print(f"[ENHANCED] 开始系统光标注入: HWND={hwnd}, 坐标=({x},{y}), 动作={action}")
             
-            # 1. 获取窗口屏幕坐标
-            rect = win32gui.GetWindowRect(hwnd)
-            screen_x = rect[0] + x
-            screen_y = rect[1] + y
+            # 1. 验证窗口和坐标
+            if not self._validate_window_and_coordinates(hwnd, x, y):
+                return False
             
-            print(f"[ENHANCED] 窗口位置: {rect}")
-            print(f"[ENHANCED] 屏幕坐标: ({screen_x}, {screen_y})")
+            # 获取正确的客户区坐标
+            client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+            screen_x = client_left + x
+            screen_y = client_top + y
             
-            # 2. 激活窗口到前台
-            self._force_activate_window(hwnd)
-            time.sleep(0.1)
+            print(f"[ENHANCED] 客户区屏幕坐标: ({screen_x}, {screen_y})")
+            
+            # 2. 温和激活窗口
+            self._gentle_activate_window(hwnd)
+            time.sleep(0.05)
             
             # 3. 保存当前光标位置
             current_pos = win32gui.GetCursorPos()
@@ -223,17 +226,29 @@ class EnhancedDingTalkInjector:
         try:
             print(f"[ENHANCED] 开始游戏角色移动注入: HWND={hwnd}, 坐标=({x},{y}), 持续时间={duration}s")
             
-            # 1. 获取窗口屏幕坐标
+            # 1. 获取窗口信息和边界检查
+            if not self._validate_window_and_coordinates(hwnd, x, y):
+                return False
+            
             rect = win32gui.GetWindowRect(hwnd)
-            screen_x = rect[0] + x
-            screen_y = rect[1] + y
+            client_rect = win32gui.GetClientRect(hwnd)
             
-            print(f"[ENHANCED] 窗口位置: {rect}")
-            print(f"[ENHANCED] 屏幕坐标: ({screen_x}, {screen_y})")
+            # 计算客户区偏移（排除标题栏和边框）
+            client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+            offset_x = client_left - rect[0]
+            offset_y = client_top - rect[1]
             
-            # 2. 激活窗口到前台
-            self._force_activate_window(hwnd)
-            time.sleep(0.1)
+            # 使用客户区坐标计算屏幕坐标
+            screen_x = client_left + x
+            screen_y = client_top + y
+            
+            print(f"[ENHANCED] 窗口边界: {rect}")
+            print(f"[ENHANCED] 客户区: {client_rect}, 偏移: ({offset_x}, {offset_y})")
+            print(f"[ENHANCED] 最终屏幕坐标: ({screen_x}, {screen_y})")
+            
+            # 2. 减少闪烁的温和激活（不强制前台）
+            self._gentle_activate_window(hwnd)
+            time.sleep(0.05)  # 减少等待时间
             
             # 3. 保存当前光标位置
             current_pos = win32gui.GetCursorPos()
@@ -277,6 +292,66 @@ class EnhancedDingTalkInjector:
             except:
                 pass
             return False
+    
+    def _validate_window_and_coordinates(self, hwnd: int, x: int, y: int) -> bool:
+        """验证窗口和坐标的有效性"""
+        try:
+            # 检查窗口是否有效
+            if not win32gui.IsWindow(hwnd):
+                print(f"[ENHANCED] 错误：窗口句柄无效 HWND={hwnd}")
+                return False
+            
+            # 获取窗口客户区大小
+            client_rect = win32gui.GetClientRect(hwnd)
+            client_width = client_rect[2] - client_rect[0]
+            client_height = client_rect[3] - client_rect[1]
+            
+            # 检查坐标是否在客户区内
+            if x < 0 or y < 0 or x >= client_width or y >= client_height:
+                print(f"[ENHANCED] 警告：坐标({x},{y})超出客户区范围({client_width}x{client_height})")
+                # 自动修正坐标到安全范围
+                x = max(10, min(x, client_width - 10))
+                y = max(10, min(y, client_height - 10))
+                print(f"[ENHANCED] 坐标已修正为: ({x},{y})")
+            
+            return True
+            
+        except Exception as e:
+            print(f"[ENHANCED] 窗口验证失败: {e}")
+            return False
+    
+    def _gentle_activate_window(self, hwnd: int):
+        """温和的窗口激活（减少闪烁）"""
+        try:
+            # 检查窗口是否已经是前台窗口
+            foreground_hwnd = win32gui.GetForegroundWindow()
+            if foreground_hwnd == hwnd:
+                print(f"[ENHANCED] 窗口已在前台，无需激活")
+                return
+            
+            # 温和激活：只显示窗口，不强制前台
+            try:
+                if win32gui.IsIconic(hwnd):  # 如果窗口最小化
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                else:
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+            except Exception as show_error:
+                # 如果显示窗口失败，尝试基本的显示
+                try:
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                except:
+                    print(f"[ENHANCED] 显示窗口失败: {show_error}")
+            
+            # 尝试设置前台，但不强制
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except:
+                # 如果设置前台失败，继续执行（某些情况下Windows不允许设置前台）
+                print(f"[ENHANCED] 无法设置前台窗口，继续执行")
+                pass
+            
+        except Exception as e:
+            print(f"[ENHANCED] 温和激活异常: {e}")
 
 # 全局增强注入器实例
 _enhanced_injector = EnhancedDingTalkInjector()
