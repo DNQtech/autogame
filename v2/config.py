@@ -14,14 +14,14 @@ WINDOW_SCAN_CONFIG = {
 TARGET_PROCESSES = [
     # 常见游戏进程名
     'Weixin.exe',
-    'DingTalk.exe',
+
 
 ]
 
 # 游戏窗口标题关键词
 GAME_WINDOW_KEYWORDS = [
     # 中文关键词
-    '钉钉', '微信',
+    '钉钉', 
 ]
 
 # 控制器配置

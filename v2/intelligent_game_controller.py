@@ -298,7 +298,7 @@ class IntelligentGameController:
             print(f"[EQUIPMENT] 装备检测异常: {e}")
     
     def _handle_equipment_pickup(self):
-        """处理装备拾取 - 升级为v1版本的智能处理逻辑"""
+        """处理装备拾取 - 就近顺序拾取（修正版）"""
         try:
             # 检查拾取冷却时间
             current_time = time.time()
@@ -315,23 +315,36 @@ class IntelligentGameController:
             with self.control_lock:
                 self.is_picking_up = True
             
-            # 逐一处理装备（v1版本逻辑）
+            # 按距离排序装备（就近拾取）
+            sorted_equipment = self._sort_equipment_by_distance(self.equipment_queue)
+            print(f"[PICKUP] 装备已按距离排序，准备逐个拾取")
+            
+            # 逐个拾取装备（重要：一个一个拾取，不并发）
             processed_equipment = []
-            for equipment_info in self.equipment_queue[:]:
+            for i, equipment_info in enumerate(sorted_equipment):
                 try:
+                    equipment_name = equipment_info.get('name', 'Unknown')
+                    print(f"[PICKUP] 正在拾取第{i+1}/{len(sorted_equipment)}个装备: {equipment_name}")
+                    
                     # 验证装备是否还存在
                     if self._verify_equipment_exists(equipment_info):
-                        print(f"[PICKUP] 拾取装备: {equipment_info.get('name', 'Unknown')}")
-                        self._pickup_single_equipment(equipment_info)
+                        # 拾取单个装备
+                        pickup_success = self._pickup_single_equipment(equipment_info)
+                        
+                        if pickup_success:
+                            print(f"[PICKUP] ✅ 装备拾取成功: {equipment_name}")
+                        else:
+                            print(f"[PICKUP] ❌ 装备拾取失败: {equipment_name}")
+                        
                         processed_equipment.append(equipment_info)
                         
                         # 更新拾取时间
                         self.last_pickup_time = time.time()
                         
-                        # 等待一下再处理下一个
-                        time.sleep(0.8)
+                        # 重要：等待拾取完成再处理下一个装备
+                        time.sleep(1.5)  # 给足够时间让游戏处理拾取
                     else:
-                        print(f"[PICKUP] 装备已消失，跳过: {equipment_info.get('name', 'Unknown')}")
+                        print(f"[PICKUP] 装备已消失，跳过: {equipment_name}")
                         processed_equipment.append(equipment_info)
                         
                 except Exception as pickup_error:
@@ -352,8 +365,8 @@ class IntelligentGameController:
             
             print(f"[PICKUP] 装备拾取处理完成，剩余 {len(self.equipment_queue)} 个装备")
     
-    def _pickup_single_equipment(self, equipment_info: Dict):
-        """拾取单个装备 - 升级为v1版本的智能拾取逻辑"""
+    def _pickup_single_equipment(self, equipment_info: Dict) -> bool:
+        """拾取单个装备 - 修正版（返回拾取结果）"""
         try:
             # 获取装备位置
             if 'position' in equipment_info:
@@ -363,40 +376,62 @@ class IntelligentGameController:
                 y = equipment_info.get('y', 0)
             
             equipment_name = equipment_info.get('name', 'Unknown')
-            print(f"[PICKUP] 开始智能拾取装备: {equipment_name}，位置: ({x}, {y})")
+            print(f"[PICKUP] 开始拾取装备: {equipment_name}，位置: ({x}, {y})")
             
-            # v1版本的智能拾取逻辑：找到离屏幕中心最近的装备
-            screen_center_x = self.screen_center_x
-            screen_center_y = self.screen_center_y
+            # 执行拾取点击序列（移动+单次点击）
+            pickup_result = self._pickup_click_sequence(x, y)
             
-            # 计算到中心的距离
-            import math
-            distance_to_center = math.sqrt((x - screen_center_x)**2 + (y - screen_center_y)**2)
-            print(f"[PICKUP] 装备距离中心: {distance_to_center:.1f} 像素")
-            
-            # 如果距离太远，先移动到装备附近
-            if distance_to_center > self.pickup_safe_distance:
-                print(f"[PICKUP] 装备距离较远，先移动到装备位置")
-                self._move_to_position(x, y, 0.8)  # 增加移动时间
-                time.sleep(0.5)  # 等待移动完成
-            
-            # 执行拾取点击序列
-            self._pickup_click_sequence(x, y)
-            
-            # 验证拾取成功
-            time.sleep(0.5)
-            if self._verify_pickup_success(equipment_info):
-                print(f"[PICKUP] ✅ 装备拾取成功: {equipment_name}")
+            if pickup_result:
+                print(f"[PICKUP] 装备拾取操作完成: {equipment_name}")
+                return True
             else:
-                print(f"[PICKUP] ⚠️ 装备拾取可能失败: {equipment_name}")
+                print(f"[PICKUP] 装备拾取操作失败: {equipment_name}")
+                return False
             
         except Exception as e:
             print(f"[PICKUP] 单个装备拾取异常: {e}")
+            return False
+    
+    def _sort_equipment_by_distance(self, equipment_list: List[Dict]) -> List[Dict]:
+        """按距离排序装备（就近拾取）"""
+        try:
+            if not equipment_list:
+                return []
+            
+            # 获取角色当前位置（假设在屏幕中心）
+            center_x = self.screen_center_x
+            center_y = self.screen_center_y
+            
+            def calculate_distance(equipment):
+                """计算装备到角色的距离"""
+                if 'position' in equipment:
+                    x, y = equipment['position']
+                else:
+                    x = equipment.get('x', center_x)
+                    y = equipment.get('y', center_y)
+                
+                import math
+                return math.sqrt((x - center_x)**2 + (y - center_y)**2)
+            
+            # 按距离排序（最近的装备优先）
+            sorted_equipment = sorted(equipment_list, key=calculate_distance)
+            
+            print(f"[PICKUP] 装备距离排序完成:")
+            for i, equipment in enumerate(sorted_equipment):
+                distance = calculate_distance(equipment)
+                name = equipment.get('name', 'Unknown')
+                print(f"  {i+1}. {name} - 距离: {distance:.1f}像素")
+            
+            return sorted_equipment
+            
+        except Exception as e:
+            print(f"[PICKUP] 装备排序异常: {e}")
+            return equipment_list
     
     def _pickup_click_sequence(self, x: int, y: int):
-        """装备拾取点击序列 - 长按Ctrl+左键移动然后左键拾取（高级非激活输入注入）"""
+        """装备拾取点击序列 - 长按Ctrl+左键移动然后单次左键拾取（修正版）"""
         try:
-            print(f"[PICKUP] 开始高级注入拾取序列，目标位置: ({x}, {y})")
+            print(f"[PICKUP] 开始装备拾取序列，目标位置: ({x}, {y})")
             
             # 方法1: 使用增强版输入注入系统（真实游戏操作）
             try:
@@ -404,48 +439,48 @@ class IntelligentGameController:
                 
                 # 第一步：移动角色到装备位置（Ctrl+左键长按）
                 if enhanced_inject_move_character(self.hwnd, x, y, 0.5):
-                    print(f"[PICKUP] 增强注入角色移动成功")
+                    print(f"[PICKUP] 角色移动到装备位置成功")
                     
-                    # 第二步：连续左键拾取（8次）
-                    pickup_success = 0
-                    for i in range(8):
-                        if enhanced_inject_click(self.hwnd, x, y):
-                            pickup_success += 1
-                        time.sleep(0.1)
+                    # 等待移动完成
+                    time.sleep(0.2)
                     
-                    print(f"[PICKUP] 增强注入拾取成功 {pickup_success}/8 次")
-                    
-                    # 第三步：备用F键拾取（使用窗口管理器发送）
-                    self.window_manager.send_key_combination_to_window(self.hwnd, ['f'])
-                    
-                    print(f"[PICKUP] 增强注入拾取完成")
-                    return
+                    # 第二步：单次左键拾取（不连续点击）
+                    if enhanced_inject_click(self.hwnd, x, y):
+                        print(f"[PICKUP] 装备拾取点击成功")
+                        
+                        # 等待拾取动画完成（重要：给游戏足够时间处理拾取）
+                        time.sleep(1.0)
+                        
+                        print(f"[PICKUP] 装备拾取完成")
+                        return True
+                    else:
+                        print(f"[PICKUP] 装备拾取点击失败")
                 else:
-                    print(f"[PICKUP] 增强注入角色移动失败")
+                    print(f"[PICKUP] 角色移动失败")
                     
             except Exception as e:
                 print(f"[PICKUP] 增强注入异常: {e}")
             
             # 方法2: 备用方案 - 使用窗口管理器的输入方法
-            print(f"[PICKUP] 高级注入失败，尝试备用方案")
+            print(f"[PICKUP] 增强注入失败，尝试备用方案")
             
             # 先移动到装备位置
             self._move_to_position(x, y, 0.5)
+            time.sleep(0.2)
             
-            # 连续点击拾取
-            pickup_success = 0
-            for i in range(8):
-                if self.window_manager.send_input_to_window(self.hwnd, x, y, 'click'):
-                    pickup_success += 1
-                time.sleep(0.1)
-            
-            # 备用F键
-            self.window_manager.send_key_combination_to_window(self.hwnd, ['f'])
-            
-            print(f"[PICKUP] 备用方案拾取完成 {pickup_success}/8 次")
+            # 单次点击拾取
+            if self.window_manager.send_input_to_window(self.hwnd, x, y, 'click'):
+                print(f"[PICKUP] 备用方案拾取点击成功")
+                # 等待拾取完成
+                time.sleep(1.0)
+                return True
+            else:
+                print(f"[PICKUP] 备用方案拾取失败")
+                return False
             
         except Exception as e:
             print(f"[PICKUP] 拾取异常: {e}")
+            return False
     
     def _verify_equipment_exists(self, equipment_info: Dict) -> bool:
         """验证装备是否还存在（简单的重新检测）"""
