@@ -312,14 +312,15 @@ class MouseKeyboardController:
                 click_time=attack_time
             )
     
-    def pickup_equipment(self, x: int, y: int, pickup_duration: float = 2.0) -> ClickResult:
+    def pickup_equipment(self, x: int, y: int, pickup_duration: float = 2.0, method: str = "click") -> ClickResult:
         """
-        捡装备功能：先移动到装备位置，然后持续左键点击
+        增强版捡装备功能：支持多种拾取方式
         
         Args:
             x: 装备中心X坐标
             y: 装备中心Y坐标
-            pickup_duration: 持续点击时间（秒）
+            pickup_duration: 持续拾取时间（秒）
+            method: 拾取方式 ("click", "key_f", "key_space", "auto")
             
         Returns:
             ClickResult: 拾取结果
@@ -327,24 +328,62 @@ class MouseKeyboardController:
         start_time = time.time()
         
         try:
+            print(f"[PICKUP] 开始拾取装备 位置:({x},{y}) 方式:{method} 时长:{pickup_duration}s")
+            
             # 第一步：移动到装备位置
-            move_result = self.move_character(x, y, 0.3)  # 0.3秒移动
+            move_result = self.move_character(x, y, 0.5)  # 增加移动时间确保到位
             if not move_result.success:
+                print(f"[PICKUP] 移动失败: {move_result.error_message}")
                 return move_result
             
             # 等待移动完成
-            time.sleep(0.2)
+            time.sleep(0.3)
+            print(f"[PICKUP] 已移动到装备位置")
             
-            # 第二步：持续左键点击拾取装备
+            # 第二步：根据方式执行拾取
             end_time = time.time() + pickup_duration
-            click_count = 0
+            action_count = 0
             
-            while time.time() < end_time:
-                pyautogui.click(x, y, button='left')
-                click_count += 1
-                time.sleep(0.1)  # 每100ms点击一次
+            if method == "click":
+                # 方式1: 持续左键点击
+                while time.time() < end_time:
+                    pyautogui.click(x, y, button='left')
+                    action_count += 1
+                    time.sleep(0.1)
+                    
+            elif method == "key_f":
+                # 方式2: 按F键拾取 (常见于RPG游戏)
+                while time.time() < end_time:
+                    pyautogui.press('f')
+                    action_count += 1
+                    time.sleep(0.2)
+                    
+            elif method == "key_space":
+                # 方式3: 按空格键拾取
+                while time.time() < end_time:
+                    pyautogui.press('space')
+                    action_count += 1
+                    time.sleep(0.2)
+                    
+            elif method == "auto":
+                # 方式4: 自动尝试多种方式
+                methods = ["click", "key_f", "key_space"]
+                method_duration = pickup_duration / len(methods)
+                
+                for auto_method in methods:
+                    method_end = time.time() + method_duration
+                    while time.time() < method_end and time.time() < end_time:
+                        if auto_method == "click":
+                            pyautogui.click(x, y, button='left')
+                        elif auto_method == "key_f":
+                            pyautogui.press('f')
+                        elif auto_method == "key_space":
+                            pyautogui.press('space')
+                        action_count += 1
+                        time.sleep(0.15)
             
             pickup_time = (time.time() - start_time) * 1000
+            print(f"[PICKUP] 拾取完成 执行{action_count}次操作 耗时:{pickup_time:.1f}ms")
             
             return ClickResult(
                 success=True,
@@ -362,6 +401,7 @@ class MouseKeyboardController:
                 pass
                 
             pickup_time = (time.time() - start_time) * 1000
+            print(f"[PICKUP] 拾取异常: {e}")
             return ClickResult(
                 success=False,
                 x=x,

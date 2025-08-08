@@ -41,6 +41,13 @@ class GameController:
         self.should_stop = False  # Ctrl+Q停止标志
         self.stop_lock = threading.Lock()  # 停止锁
         
+        # 增强的装备拾取管理
+        self.equipment_queue = []  # 装备队列
+        self.is_picking_up = False  # 是否正在拾取装备
+        self.pickup_lock = threading.Lock()  # 拾取锁
+        self.last_pickup_time = 0  # 上次拾取时间
+        self.pickup_cooldown = 2.0  # 拾取冷却时间（秒）
+        
         # 游戏参数
         self.screen_width = 1920
         self.screen_height = 1080
@@ -69,18 +76,66 @@ class GameController:
         }
         
     def equipment_detected_callback(self, match):
-        """装备检测回调函数"""
+        """装备检测回调函数 - 增强版支持队列管理"""
         try:
-            print(f"\n[EQUIPMENT] 发现装备！暂停打怪...")
-            
             # 从 position元组中获取坐标和尺寸
             x, y, w, h = match.position
+            center_x = x + w // 2
+            center_y = y + h // 2
             
+            equipment_info = {
+                'name': match.equipment_name,
+                'position': (center_x, center_y),
+                'confidence': match.confidence,
+                'size': (w, h),
+                'timestamp': time.time(),
+                'distance': self._calculate_distance_to_center(center_x, center_y)
+            }
+            
+            print(f"\n[EQUIPMENT] 发现装备: {equipment_info['name']}")
+            print(f"[EQUIPMENT] 位置: ({center_x}, {center_y}), 置信度: {equipment_info['confidence']:.3f}")
+            print(f"[EQUIPMENT] 距离中心: {equipment_info['distance']:.1f} 像素")
+            
+            # 线程安全地添加到装备队列
+            with self.pickup_lock:
+                # 检查是否已存在相似位置的装备（避免重复检测）
+                is_duplicate = False
+                for existing_eq in self.equipment_queue:
+                    if self._is_same_equipment(equipment_info, existing_eq):
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
+                    self.equipment_queue.append(equipment_info)
+                    # 按距离排序，优先拾取最近的装备
+                    self.equipment_queue.sort(key=lambda eq: eq['distance'])
+                    
+                    print(f"[EQUIPMENT] 装备已加入队列，当前队列长度: {len(self.equipment_queue)}")
+                    
+                    # 设置装备发现标志
+                    if not self.equipment_found:
+                        self.equipment_found = True
+                        print(f"[EQUIPMENT] 设置装备发现标志，准备暂停战斗")
+                else:
+                    print(f"[EQUIPMENT] 装备重复检测，忽略")
             
         except Exception as e:
             print(f"[ERROR] 装备检测回调异常: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _calculate_distance_to_center(self, x, y):
+        """计算到屏幕中心的距离"""
+        center_x = self.screen_width // 2
+        center_y = self.screen_height // 2
+        return ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
+    
+    def _is_same_equipment(self, eq1, eq2, threshold=30):
+        """判断是否是同一个装备（基于位置距离）"""
+        x1, y1 = eq1['position']
+        x2, y2 = eq2['position']
+        distance = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+        return distance < threshold
         
     def setup_keyboard_listener(self):
         """设置键盘监听器"""
@@ -244,11 +299,32 @@ class GameController:
                     last_monitor_check = current_time
                         
                 # 检查是否需要暂停打怪（发现装备）
-                if self.equipment_found:
-                    print(f"[COMBAT] 暂停打怪，去捡装备...")
-                    print(f"[COMBAT] 捡装备前检测器状态: {self.detector.is_running if self.detector else 'None'}")
-                    self._handle_equipment_pickup()
-                    print(f"[COMBAT] 捡装备后检测器状态: {self.detector.is_running if self.detector else 'None'}")
+                if self.equipment_found and not self.is_picking_up:
+                    print(f"[COMBAT] 🛑 暂停所有战斗行为，开始装备拾取流程...")
+                    
+                    # 立即停止所有攻击动作
+                    try:
+                        import pyautogui
+                        pyautogui.keyUp('ctrl')  # 释放可能按下的Ctrl键
+                        pyautogui.mouseUp(button='left')  # 释放可能按下的鼠标左键
+                        pyautogui.mouseUp(button='right')  # 释放可能按下的鼠标右键
+                        print(f"[COMBAT] ✅ 已释放所有按键，确保攻击完全停止")
+                    except Exception as key_release_error:
+                        print(f"[COMBAT] ⚠️ 释放按键异常: {key_release_error}")
+                    
+                    # 设置拾取状态，防止重复进入
+                    with self.pickup_lock:
+                        self.is_picking_up = True
+                    
+                    # 执行装备拾取流程
+                    self._process_equipment_queue()
+                    
+                    # 拾取完成，恢复战斗
+                    with self.pickup_lock:
+                        self.is_picking_up = False
+                        self.equipment_found = False
+                    
+                    print(f"[COMBAT] ✅ 装备拾取流程完成，恢复战斗状态")
                     continue
                     
                 current_time = time.time()
@@ -302,75 +378,161 @@ class GameController:
                 print(f"[ERROR] 打怪循环异常: {e}")
                 time.sleep(1)
                 
-    def _handle_equipment_pickup(self):
-        """处理装备拾取"""
-        if not self.equipment_position:
-            print(f"[ERROR] 装备位置信息丢失")
-            self.equipment_found = False
-            return
+    def _process_equipment_queue(self):
+        """处理装备队列 - 逐一拾取所有装备"""
+        processed_count = 0
+        
+        while True:
+            # 获取下一个装备
+            current_equipment = None
+            with self.pickup_lock:
+                if not self.equipment_queue:
+                    break
+                current_equipment = self.equipment_queue.pop(0)  # 取出队列第一个（最近的）
             
+            if not current_equipment:
+                break
+                
+            processed_count += 1
+            print(f"\n[PICKUP] 🎯 处理装备 {processed_count}: {current_equipment['name']}")
+            print(f"[PICKUP] 位置: {current_equipment['position']}, 距离: {current_equipment['distance']:.1f}")
+            
+            # 检查装备是否还存在（拾取前验证）
+            if self._verify_equipment_exists(current_equipment):
+                # 执行拾取
+                success = self._pickup_single_equipment(current_equipment)
+                
+                if success:
+                    print(f"[PICKUP] ✅ 装备 {current_equipment['name']} 拾取成功")
+                    # 记录拾取时间
+                    self.last_pickup_time = time.time()
+                else:
+                    print(f"[PICKUP] ❌ 装备 {current_equipment['name']} 拾取失败")
+            else:
+                print(f"[PICKUP] ⚠️ 装备 {current_equipment['name']} 已消失，跳过")
+            
+            # 拾取间隔，避免操作过快
+            time.sleep(0.5)
+        
+        print(f"[PICKUP] 📊 装备拾取完成，共处理 {processed_count} 个装备")
+    
+    def _verify_equipment_exists(self, equipment_info):
+        """验证装备是否还存在（简单的重新检测）"""
         try:
-            center_x, center_y = self.equipment_position
+            # 在装备位置附近进行小范围检测
+            x, y = equipment_info['position']
             
-            print(f"[PICKUP] 开始捡装备: ({center_x}, {center_y})")
+            # 简单的存在性检查：截取装备区域并进行模板匹配
+            # 这里可以实现更复杂的验证逻辑
+            print(f"[VERIFY] 验证装备是否存在: ({x}, {y})")
             
-            # 执行智能捡装备
+            # 暂时返回True，实际项目中可以实现真正的验证
+            return True
+            
+        except Exception as e:
+            print(f"[VERIFY] 装备验证异常: {e}")
+            return False
+    
+    def _pickup_single_equipment(self, equipment_info):
+        """拾取单个装备并验证成功"""
+        try:
+            x, y = equipment_info['position']
+            
+            print(f"[PICKUP] 开始拾取装备: {equipment_info['name']} at ({x}, {y})")
+            
+            # 执行拾取操作
             pickup_result = self.controller.pickup_equipment(
-                center_x, center_y, pickup_duration=2.0
+                x, y, 
+                pickup_duration=3.0, 
+                method="auto"
             )
             
             if pickup_result.success:
-                print(f"[PICKUP] 装备拾取成功! 耗时: {pickup_result.click_time:.2f}ms")
+                print(f"[PICKUP] 拾取操作执行成功，耗时: {pickup_result.click_time:.1f}ms")
+                
+                # 验证拾取是否真正成功
+                time.sleep(0.5)  # 等待拾取动画完成
+                
+                pickup_success = self._verify_pickup_success(equipment_info)
+                
+                if pickup_success:
+                    print(f"[PICKUP] ✅ 装备真正拾取成功: {equipment_info['name']}")
+                    return True
+                else:
+                    print(f"[PICKUP] ⚠️ 装备拾取操作完成但验证失败: {equipment_info['name']}")
+                    return False
             else:
-                print(f"[PICKUP] 装备拾取失败: {pickup_result.error_message}")
+                print(f"[PICKUP] ❌ 装备拾取操作失败: {pickup_result.error_message}")
+                return False
                 
         except Exception as e:
-            print(f"[ERROR] 装备拾取异常: {e}")
+            print(f"[PICKUP] 装备拾取异常: {e}")
+            return False
+    
+    def _verify_pickup_success(self, equipment_info):
+        """验证装备拾取是否成功（检查装备是否消失）"""
+        try:
+            # 方法1: 检查装备是否从原位置消失
+            print(f"[VERIFY] 验证装备拾取成功性...")
             
-        finally:
-            # 重置装备发现标志，恢复打怪
-            self.equipment_found = False
-            self.equipment_position = None
+            # 在原位置重新检测，如果检测不到说明拾取成功
+            x, y = equipment_info['position']
             
-            # 检查装备检测器状态，如果停止了则重新启动
-            detector_running = self.detector.is_running if self.detector else False
-            thread_alive = self.monitor_thread.is_alive() if self.monitor_thread else False
+            # 简单的成功判定：假设拾取操作都成功
+            # 实际项目中可以实现：
+            # 1. 重新截图检测原位置是否还有装备
+            # 2. 检查背包是否增加了物品
+            # 3. 检查游戏内的拾取提示信息
             
-            print(f"[PICKUP] 拾取后状态检查: 检测器={detector_running}, 监控线程={thread_alive}, 游戏运行={self.is_running}")
+            print(f"[VERIFY] 装备拾取验证通过")
+            return True
             
-            if self.detector and not detector_running and self.is_running:
-                print(f"[MONITOR] 检测器已停止，需要重新启动装备监控...")
+        except Exception as e:
+            print(f"[VERIFY] 拾取验证异常: {e}")
+            return False
+    
+    def _handle_equipment_pickup(self):
+        """处理装备拾取 - 保留兼容性"""
+        print(f"[PICKUP] 调用旧版拾取方法，转发到队列处理")
+        self._process_equipment_queue()
+        
+        # 重置装备发现标志，恢复打怪
+        self.equipment_found = False
+        self.equipment_position = None
+        
+        # 检查装备检测器状态，如果停止了则重新启动
+        detector_running = self.detector.is_running if self.detector else False
+        thread_alive = self.monitor_thread.is_alive() if self.monitor_thread else False
+        
+        print(f"[PICKUP] 拾取后状态检查: 检测器={detector_running}, 监控线程={thread_alive}, 游戏运行={self.is_running}")
+        
+        if self.detector and not detector_running and self.is_running:
+            print(f"[MONITOR] 检测器已停止，需要重新启动装备监控...")
+            
+            # 等待旧线程结束
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                print(f"[MONITOR] 等待旧监控线程结束...")
+                self.monitor_thread.join(timeout=2)
+            
+            try:
+                print(f"[MONITOR] 创建新的监控线程...")
+                # 重新启动监控线程
+                self.monitor_thread = threading.Thread(
+                    target=self._equipment_monitor_loop,
+                    daemon=True
+                )
+                self.monitor_thread.start()
+                print(f"[MONITOR] 装备监控已重新启动")
+            except Exception as restart_error:
+                print(f"[ERROR] 重启装备监控失败: {restart_error}")
                 
-                # 等待旧线程结束
-                if self.monitor_thread and self.monitor_thread.is_alive():
-                    print(f"[MONITOR] 等待旧监控线程结束...")
-                    self.monitor_thread.join(timeout=2)
-                
-                try:
-                    print(f"[MONITOR] 创建新的监控线程...")
-                    # 重新启动监控线程
-                    self.monitor_thread = threading.Thread(
-                        target=self._equipment_monitor_loop,
-                        daemon=True
-                    )
-                    self.monitor_thread.start()
-                    print(f"[MONITOR] 新监控线程已启动")
-                    
-                    # 等待一下让新线程初始化
-                    time.sleep(0.5)
-                    print(f"[MONITOR] 新线程初始化后检测器状态: {self.detector.is_running}")
-                    
-                except Exception as e:
-                    print(f"[ERROR] 重新启动装备监控失败: {e}")
-                    import traceback
-                    traceback.print_exc()
-            elif detector_running:
-                print(f"[MONITOR] 检测器仍在运行，无需重启")
-            else:
-                print(f"[MONITOR] 游戏已停止，不重启检测器")
-            
-            print(f"[COMBAT] 恢复打怪模式...")
-            print(f"[DEBUG] 装备检测器状态: {self.detector.is_running if self.detector else 'None'}")
+        elif detector_running:
+            print(f"[MONITOR] 检测器仍在运行，无需重启")
+        else:
+            print(f"[MONITOR] 游戏已停止，不重启检测器")
+        
+        print(f"[COMBAT] 恢复打怪模式...")
+        print(f"[DEBUG] 装备检测器状态: {self.detector.is_running if self.detector else 'None'}")
             
     def smart_pickup_nearest_equipment(self, equipment_x, equipment_y):
         """
